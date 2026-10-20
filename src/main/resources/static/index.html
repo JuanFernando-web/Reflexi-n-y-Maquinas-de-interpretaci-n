@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Figuras geometricas - reflexion y Groovy</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #1c1c1c; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 32px; }
+  section { border: 1px solid #d0d0d0; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  label { display: inline-block; margin: 4px 12px 4px 0; }
+  input, select, textarea, button { font: inherit; padding: 6px 8px; }
+  textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+  pre { background: #f4f4f4; padding: 12px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }
+  .error { color: #b00020; }
+  small { color: #666; }
+</style>
+</head>
+<body>
+<h1>Figuras geometricas</h1>
+<p><small>ISWZ2202 - Diseno y Arquitectura de Software. Las figuras se crean por reflexion a partir del nombre de la clase; las que no vienen incluidas se compilan en Groovy en tiempo de ejecucion.</small></p>
+
+<section>
+  <h2>1. Crear una figura</h2>
+  <label>Clase <select id="clase"></select></label>
+  <span id="campos"></span>
+  <button id="crear">Crear</button>
+  <pre id="resCrear">Elige una figura, escribe sus parametros y pulsa Crear.</pre>
+</section>
+
+<section>
+  <h2>2. Cargar una figura en Groovy</h2>
+  <p><small>Debe definir una clase que extienda FiguraGeometrica (o implemente Figura). Al cargarla aparece en la lista de arriba.</small></p>
+  <textarea id="codigo" rows="22">import com.udla.figuras.modelo.FiguraGeometrica
+
+/** Pentagono regular de lado "lado". Se carga en tiempo de ejecucion y funciona como una clase nativa. */
+class Pentagono extends FiguraGeometrica {
+
+    private final double lado
+
+    Pentagono(double lado) {
+        super("Pentagono")
+        validarPositivo(lado, "lado")
+        this.lado = lado
+    }
+
+    @Override
+    double calcularArea() {
+        return Math.sqrt(5 * (5 + 2 * Math.sqrt(5))) / 4 * lado * lado
+    }
+
+    @Override
+    double calcularPerimetro() {
+        return 5 * lado
+    }
+}
+</textarea>
+  <p><button id="cargar">Compilar y cargar</button></p>
+  <pre id="resCargar"></pre>
+</section>
+
+<section>
+  <h2>3. Extra: servicio externo</h2>
+  <p><small>Consulta el servicio configurado en <code>figuras.externo.url</code> (por defecto, el simulado de esta aplicacion) y carga las figuras que publica.</small></p>
+  <button id="sincronizar">Sincronizar figuras externas</button>
+  <pre id="resExterno"></pre>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let tipos = [];
+
+function mostrar(el, texto, esError) {
+  el.textContent = texto;
+  el.className = esError ? 'error' : '';
+}
+
+async function pedir(url, opciones) {
+  const r = await fetch(url, opciones);
+  const cuerpo = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(cuerpo.error || ('HTTP ' + r.status));
+  return cuerpo;
+}
+
+function pintarCampos() {
+  const tipo = tipos.find((t) => t.nombre === $('clase').value);
+  const contenedor = $('campos');
+  contenedor.replaceChildren();
+  if (!tipo || tipo.constructores.length === 0) return;
+  for (const p of tipo.constructores[0]) {
+    const etiqueta = document.createElement('label');
+    etiqueta.append(p.nombre + ' ');
+    const entrada = document.createElement('input');
+    entrada.dataset.nombre = p.nombre;
+    entrada.size = 8;
+    entrada.value = '1';
+    etiqueta.append(entrada);
+    contenedor.append(etiqueta);
+  }
+}
+
+async function cargarTipos() {
+  tipos = await pedir('/api/figuras/tipos');
+  const seleccion = $('clase').value;
+  $('clase').replaceChildren(...tipos.map((t) => new Option(t.nombre + ' (' + t.origen.toLowerCase() + ')', t.nombre)));
+  if (tipos.some((t) => t.nombre === seleccion)) $('clase').value = seleccion;
+  pintarCampos();
+}
+
+$('clase').addEventListener('change', pintarCampos);
+
+$('crear').addEventListener('click', async () => {
+  const parametros = {};
+  for (const entrada of $('campos').querySelectorAll('input')) parametros[entrada.dataset.nombre] = entrada.value;
+  try {
+    const r = await pedir('/api/figuras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clase: $('clase').value, parametros })
+    });
+    mostrar($('resCrear'), JSON.stringify(r, null, 2), false);
+  } catch (e) { mostrar($('resCrear'), e.message, true); }
+});
+
+$('cargar').addEventListener('click', async () => {
+  try {
+    const r = await pedir('/api/figuras/groovy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: $('codigo').value
+    });
+    mostrar($('resCargar'), 'Cargada: ' + r.map((t) => t.nombre).join(', '), false);
+    await cargarTipos();
+  } catch (e) { mostrar($('resCargar'), e.message, true); }
+});
+
+$('sincronizar').addEventListener('click', async () => {
+  try {
+    const r = await pedir('/api/figuras/externo/sincronizar', { method: 'POST' });
+    mostrar($('resExterno'), JSON.stringify(r, null, 2), false);
+    await cargarTipos();
+  } catch (e) { mostrar($('resExterno'), e.message, true); }
+});
+
+cargarTipos().catch((e) => mostrar($('resCrear'), e.message, true));
+</script>
+</body>
+</html>
